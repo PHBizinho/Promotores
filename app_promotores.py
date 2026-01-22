@@ -7,17 +7,16 @@ st.set_page_config(page_title="Controle de Promotores", layout="centered")
 # --- FUNÇÃO PARA CARREGAR OS DADOS DO EXCEL ---
 def buscar_fornecedores():
     try:
-        # Carrega o arquivo Excel que você criou
-        # O parâmetro engine='openpyxl' ajuda a evitar erros de leitura
-        df = pd.read_excel("APP_PROMOTORES/BASE_FORNECEDORES.xlsx")
+        # Remova "APP_PROMOTORES/" do caminho. 
+        # No GitHub, o arquivo está na mesma pasta que o script.
+        df = pd.read_excel("BASE_FORNECEDORES.xlsx", skiprows=1)
         
-        # Limpa espaços em branco que possam vir do Excel
-        df['Fornecedor'] = df['Fornecedor'].astype(str).str.strip()
+        # Opcional: Garante que os nomes das colunas estão corretos
+        df.columns = ['Código', 'Fornecedor', 'CNPJ_CPF', 'Fantasia']
         return df
     except Exception as e:
         st.error(f"Erro ao carregar o arquivo Excel: {e}")
-        # Retorna um DataFrame vazio se der erro para não travar o app
-        return pd.DataFrame(columns=['Código', 'Fornecedor'])
+        return pd.DataFrame()
 
 st.title("📲 Registro de Promotores")
 st.info("Utilizando base temporária em Excel")
