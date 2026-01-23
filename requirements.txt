@@ -2,3 +2,4 @@ streamlit
 pandas
 openpyxl
 oracledb
+st-gsheets-connection
