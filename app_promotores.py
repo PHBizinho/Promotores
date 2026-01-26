@@ -48,10 +48,9 @@ if menu == "Cadastro/Edição":
             if st.form_submit_button("Salvar Registro"):
                 if nome and len(cpf) == 11 and forn:
                     conn = sqlite3.connect('dados_mmfrios.db')
-                    # Validação de CPF Duplicado
                     check = pd.read_sql_query(f"SELECT cpf FROM promotores WHERE cpf = '{cpf}'", conn)
                     if not check.empty:
-                        st.error(f"❌ Erro: O CPF {cpf} já está cadastrado no sistema!")
+                        st.error(f"❌ Erro: O CPF {cpf} já está cadastrado!")
                     else:
                         c = conn.cursor()
                         c.execute("INSERT INTO promotores (nome, cpf, fornecedor) VALUES (?, ?, ?)", 
@@ -72,7 +71,8 @@ if menu == "Cadastro/Edição":
             with st.form("form_edicao"):
                 novo_nome = st.text_input("Nome:", value=dados_p['nome'])
                 novo_cpf = st.text_input("CPF:", value=dados_p['cpf'], max_chars=11)
-                novo_forn = st.selectbox("Fornecedor:", lista_fornecedores, index=lista_fornecedores.index(dados_p['fornecedor']) if dados_p['fornecedor'] in lista_fornecedores else 0)
+                idx_forn = lista_fornecedores.index(dados_p['fornecedor']) if dados_p['fornecedor'] in lista_fornecedores else 0
+                novo_forn = st.selectbox("Fornecedor:", lista_fornecedores, index=idx_forn)
                 
                 if st.form_submit_button("Atualizar Dados"):
                     c = conn.cursor()
@@ -83,30 +83,58 @@ if menu == "Cadastro/Edição":
                     st.rerun()
         conn.close()
 
-# --- 6. ENTRADA E SAÍDA ---
+# --- 6. ENTRADA E SAÍDA (COM PAINEL 'EM LOJA') ---
 elif menu == "Entrada e Saída":
     st.title("🕒 Registro de Fluxo")
+    
     conn = sqlite3.connect('dados_mmfrios.db')
+    
+    # --- Painel de Promotores em Loja ---
+    st.subheader("📍 Promotores em Loja Agora")
+    # Busca o último registro de cada promotor hoje
+    hoje = datetime.now().strftime("%d/%m/%Y")
+    query_hoje = f"SELECT v.nome, v.evento, v.data_hora, p.fornecedor FROM visitas v JOIN promotores p ON v.nome = p.nome WHERE v.data_hora LIKE '{hoje}%'"
+    df_hoje = pd.read_sql_query(query_hoje, conn)
+    
+    if not df_hoje.empty:
+        # Pega o último evento de cada um
+        df_hoje['data_hora_dt'] = pd.to_datetime(df_hoje['data_hora'], format="%d/%m/%Y %H:%M:%S")
+        ultimos_status = df_hoje.sort_values('data_hora_dt').groupby('nome').last().reset_index()
+        em_loja = ultimos_status[ultimos_status['evento'] == 'ENTRADA']
+        
+        if not em_loja.empty:
+            for i, row in em_loja.iterrows():
+                st.info(f"🟢 **{row['nome']}** - {row['fornecedor']} (Entrou às: {row['data_hora'].split(' ')[1]})")
+        else:
+            st.write("Nenhum promotor em loja no momento.")
+    else:
+        st.write("Nenhum registro hoje.")
+    
+    st.markdown("---")
+    
+    # --- Registro de Ações ---
     df_p = pd.read_sql_query("SELECT nome, fornecedor FROM promotores", conn)
     if not df_p.empty:
         df_p["display"] = df_p["nome"] + " (" + df_p["fornecedor"] + ")"
-        selecionado = st.selectbox("Identifique o Promotor:", [""] + df_p["display"].tolist())
+        selecionado = st.selectbox("Selecione o Promotor para registrar:", [""] + df_p["display"].tolist())
         if selecionado:
             nome_real = selecionado.split(" (")[0]
             col1, col2 = st.columns(2)
             agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
             with col1:
-                if st.button("ENTRADA 🟢", use_container_width=True):
+                if st.button("REGISTRAR ENTRADA 🟢", use_container_width=True):
                     c = conn.cursor()
                     c.execute("INSERT INTO visitas (nome, evento, data_hora) VALUES (?, ?, ?)", (nome_real, "ENTRADA", agora))
                     conn.commit()
-                    st.success(f"Entrada registrada: {agora}")
+                    st.success(f"Entrada registrada!")
+                    st.rerun()
             with col2:
-                if st.button("SAÍDA 🔴", use_container_width=True):
+                if st.button("REGISTRAR SAÍDA 🔴", use_container_width=True):
                     c = conn.cursor()
                     c.execute("INSERT INTO visitas (nome, evento, data_hora) VALUES (?, ?, ?)", (nome_real, "SAÍDA", agora))
                     conn.commit()
-                    st.warning(f"Saída registrada: {agora}")
+                    st.warning(f"Saída registrada!")
+                    st.rerun()
     conn.close()
 
 # --- 7. RELATÓRIOS ---
@@ -117,7 +145,7 @@ elif menu == "Relatórios":
     st.dataframe(df_v, use_container_width=True)
     conn.close()
 
-# --- 8. VISÃO COMERCIAL (COM CÁLCULO DE TEMPO) ---
+# --- 8. VISÃO COMERCIAL ---
 elif menu == "Visão Comercial":
     st.title("📊 Gestão de Permanência em Loja")
     conn = sqlite3.connect('dados_mmfrios.db')
@@ -131,7 +159,6 @@ elif menu == "Visão Comercial":
         df_semana = df[df['data_hora'] >= (datetime.now() - timedelta(days=7))].copy()
 
         if not df_semana.empty:
-            # Lógica para calcular o tempo de permanência
             resultados = []
             for (nome, data), group in df_semana.groupby(['nome', 'data_apenas']):
                 entrada = group[group['evento'] == 'ENTRADA']['data_hora'].min()
@@ -153,6 +180,6 @@ elif menu == "Visão Comercial":
                 })
             
             df_final = pd.DataFrame(resultados).sort_values(by="Data", ascending=False)
-            st.table(df_final) # Tabela em destaque
+            st.table(df_final)
         else:
             st.info("Nenhuma visita nos últimos 7 dias.")
