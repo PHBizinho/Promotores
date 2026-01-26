@@ -4,82 +4,73 @@ import pandas as pd
 import os
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="Sistema MM Frios", layout="wide", page_icon="❄️")
+st.set_page_config(page_title="Gestão Prevenção de Perdas", layout="wide", page_icon="🛡️")
 
-# --- 2. CONEXÃO COM GOOGLE SHEETS ---
+# --- 2. CONEXÃO ---
+# Localmente, o Streamlit busca as chaves no arquivo .streamlit/secrets.toml
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1Wsx93H2clHbwc95J3vZ4j0AMDeOHOg3wBKiomtyDljI/edit#gid=0"
 except Exception as e:
-    st.error(f"Erro na conexão: {e}")
+    st.error("Erro de conexão. Verifique se o arquivo secrets.toml está na pasta .streamlit")
     st.stop()
 
 # --- 3. MENU LATERAL ---
-# Tentativa de carregar a logo local. Se não encontrar, ele não trava o app.
-caminho_logo = "LOGO_CORTE-FACIL2.png"
-if os.path.exists(caminho_logo):
-    st.sidebar.image(caminho_logo, use_container_width=True)
-else:
-    # Caso o nome do arquivo tenha extensão diferente (ex: .jpg) ou não subiu
-    st.sidebar.image("https://cdn-icons-png.flaticon.com/512/1067/1067566.png", width=100)
-
-st.sidebar.title("Menu de Gestão")
-menu = st.sidebar.radio("Navegação", ["Cadastro de Promotor", "Relatórios"])
+st.sidebar.title("🛡️ Sistema de controle - Fluxo de promotores")
+menu = st.sidebar.radio("Navegação", ["Cadastro de Promotores", "Controle de Acesso", "Relatórios"])
 
 # --- 4. ABA: CADASTRO DE PROMOTOR ---
-if menu == "Cadastro de Promotor":
-    st.title("👤 Cadastro de Promotor")
-    st.markdown("---")
+if menu == "Cadastro de Promotores":
+    st.title("👤 Novo Cadastro")
     
     with st.form("form_cadastro", clear_on_submit=True):
         col1, col2 = st.columns(2)
-        
         with col1:
-            nome = st.text_input("Nome Completo:", placeholder="Ex: João Silva")
-        
+            nome = st.text_input("Nome do Promotor:")
         with col2:
-            cpf = st.text_input("CPF (apenas 11 números):", max_chars=11, placeholder="00011122233")
+            cpf = st.text_input("CPF (11 números):", max_chars=11)
             
-        submit = st.form_submit_button("Finalizar e Salvar Cadastro")
+        submit = st.form_submit_button("Salvar na Base de Dados")
 
         if submit:
-            if nome and len(cpf) == 11 and cpf.isdigit():
+            if nome and len(cpf) == 11:
                 try:
-                    novo_dado = pd.DataFrame([{"NOME": nome.upper().strip(), "CPF": cpf}])
-                    conn.create(spreadsheet=URL_PLANILHA, worksheet="CADASTRO", data=novo_dado)
-                    st.success(f"✅ {nome.upper()} cadastrado com sucesso!")
-                    st.balloons()
+                    # Lógica de Memória: Lê o atual, adiciona o novo, salva tudo
+                    df_atual = conn.read(spreadsheet=URL_PLANILHA, worksheet="CADASTRO")
+                    novo_promotor = pd.DataFrame([{"NOME": nome.upper().strip(), "CPF": cpf}])
+                    df_final = pd.concat([df_atual, novo_promotor], ignore_index=True)
+                    
+                    conn.update(spreadsheet=URL_PLANILHA, worksheet="CADASTRO", data=df_final)
+                    
+                    st.success(f"Registro de {nome.upper()} salvo com sucesso!")
                 except Exception as e:
-                    st.error(f"Erro ao salvar na planilha: {e}")
-            elif not cpf.isdigit():
-                st.error("⚠️ O CPF deve conter apenas números.")
-            elif len(cpf) != 11:
-                st.error("⚠️ O CPF deve ter exatamente 11 dígitos.")
+                    st.error(f"Erro ao salvar: {e}")
             else:
-                st.warning("⚠️ Preencha o nome completo.")
+                st.warning("Preencha Nome e CPF corretamente.")
 
-    st.markdown("### Promotores Ativos")
-    try:
-        df_lista = conn.read(spreadsheet=URL_PLANILHA, worksheet="CADASTRO")
-        if not df_lista.empty:
-            st.dataframe(df_lista.sort_index(ascending=False), use_container_width=True)
-    except:
-        st.info("Aguardando novos registros...")
-
-# --- 5. ABA: RELATÓRIOS ---
-elif menu == "Relatórios":
-    st.title("📊 Painel de Controle")
-    st.markdown("---")
+# --- 5. ABA: CONTROLE DE ACESSO (ONDE O FUNCIONÁRIO TRABALHARÁ) ---
+elif menu == "Controle de Acesso":
+    st.title("🕒 Entrada e Saída")
     
+    # Busca a lista de promotores cadastrados para o funcionário escolher
     try:
-        df = conn.read(spreadsheet=URL_PLANILHA, worksheet="CADASTRO")
-        if not df.empty:
-            st.metric("Total de Promotores", len(df))
-            st.dataframe(df, use_container_width=True)
-            
-            csv = df.to_csv(index=False).encode('utf-8')
-            st.download_button("Baixar Lista (CSV)", csv, "promotores.csv", "text/csv")
-        else:
-            st.warning("Nenhum promotor cadastrado ainda.")
-    except Exception as e:
-        st.error(f"Erro ao carregar dados: {e}")
+        df_promotores = conn.read(spreadsheet=URL_PLANILHA, worksheet="CADASTRO")
+        lista_nomes = df_promotores["NOME"].tolist()
+        
+        selecionado = st.selectbox("Selecione o Promotor:", [""] + lista_nomes)
+        
+        col_ent, col_sai = st.columns(2)
+        with col_ent:
+            if st.button("Registrar ENTRADA", use_container_width=True):
+                st.info(f"Entrada de {selecionado} registrada!") # Aqui faremos a lógica de salvar na aba VISITAS
+        with col_sai:
+            if st.button("Registrar SAÍDA", use_container_width=True):
+                st.info(f"Saída de {selecionado} registrada!")
+    except:
+        st.error("Nenhum promotor cadastrado para registrar acesso.")
+
+# --- 6. ABA: RELATÓRIOS ---
+elif menu == "Relatórios":
+    st.title("📊 Base de Dados")
+    df = conn.read(spreadsheet=URL_PLANILHA, worksheet="CADASTRO")
+    st.dataframe(df, use_container_width=True)
