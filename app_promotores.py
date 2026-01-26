@@ -1,82 +1,95 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-from datetime import datetime
+import os
 
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Sistema MM Frios", layout="wide", page_icon="❄️")
 
-# --- 2. TRATAMENTO DE SEGURANÇA DA CHAVE ---
-# Este bloco força a correção de formatação da private_key antes de conectar
-try:
-    if "connections" in st.secrets and "gsheets" in st.secrets["connections"]:
-        secret_dict = st.secrets["connections"]["gsheets"]
-        if "private_key" in secret_dict:
-            # Remove espaços extras e garante que o \n seja lido como quebra de linha real
-            raw_key = secret_dict["private_key"].strip()
-            fixed_key = raw_key.replace("\\n", "\n")
-            st.secrets.connections.gsheets.private_key = fixed_key
-except Exception as e:
-    st.error(f"Erro ao processar as chaves de segurança: {e}")
-
-# --- 3. CONEXÃO COM GOOGLE SHEETS ---
+# --- 2. CONEXÃO COM GOOGLE SHEETS ---
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1Wsx93H2clHbwc95J3vZ4j0AMDeOHOg3wBKiomtyDljI/edit#gid=0"
 except Exception as e:
-    st.error("Erro crítico na conexão com o Google. Verifique os Secrets no painel do Streamlit.")
+    st.error(f"Erro na conexão: {e}")
     st.stop()
 
-# --- 4. FUNÇÕES DE DADOS ---
-def carregar_dados(aba):
-    try:
-        return conn.read(spreadsheet=URL_PLANILHA, worksheet=aba)
-    except:
-        return pd.DataFrame()
+# --- 3. MENU LATERAL COM LOGO ---
+caminho_logo = "LOGO_CORTE-FACIL2.png"
+if os.path.exists(caminho_logo):
+    st.sidebar.image(caminho_logo, use_container_width=True)
+else:
+    st.sidebar.image("https://cdn-icons-png.flaticon.com/512/1067/1067566.png", width=100)
 
-# --- 5. INTERFACE (MENU) ---
 st.sidebar.title("Menu de Gestão")
-menu = st.sidebar.radio("Navegação", ["Check-in/Out", "Cadastro de Promotor", "Relatórios"])
+menu = st.sidebar.radio("Navegação", ["Cadastro de Promotor", "Relatórios"])
 
+# --- 4. ABA: CADASTRO DE PROMOTOR ---
 if menu == "Cadastro de Promotor":
     st.title("👤 Cadastro de Promotor")
+    st.markdown("---")
     
-    with st.form("form_cadastro"):
-        nome = st.text_input("Nome Completo:")
-        cpf = st.text_input("CPF (apenas números):")
-        submit = st.form_submit_button("Salvar no Google Sheets")
+    with st.form("form_cadastro", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            nome = st.text_input("Nome Completo:", placeholder="Ex: João Silva")
+        
+        with col2:
+            cpf = st.text_input("CPF (apenas 11 números):", max_chars=11, placeholder="00011122233")
+            
+        submit = st.form_submit_button("Finalizar e Salvar Cadastro")
 
         if submit:
-            if nome and cpf:
+            if nome and len(cpf) == 11 and cpf.isdigit():
                 try:
-                    # Carrega dados atuais para verificar duplicados ou anexar
-                    df_existente = carregar_dados("CADASTRO")
-                    novo_dado = pd.DataFrame([{"NOME": nome, "CPF": cpf}])
+                    # 1. Lê os dados existentes para não apagar o que já existe
+                    df_existente = conn.read(spreadsheet=URL_PLANILHA, worksheet="CADASTRO")
                     
-                    if not df_existente.empty:
-                        df_final = pd.concat([df_existente, novo_dado], ignore_index=True)
-                    else:
-                        df_final = novo_dado
+                    # 2. Cria o novo registro
+                    novo_registro = pd.DataFrame([{"NOME": nome.upper().strip(), "CPF": cpf}])
                     
-                    # Atualiza a planilha
-                    conn.update(spreadsheet=URL_PLANILHA, worksheet="CADASTRO", data=df_final)
-                    st.success(f"✅ {nome} cadastrado com sucesso!")
+                    # 3. Junta o novo registro com a lista antiga
+                    df_atualizado = pd.concat([df_existente, novo_registro], ignore_index=True)
+                    
+                    # 4. Usa .update para salvar a lista completa usando a Service Account
+                    conn.update(spreadsheet=URL_PLANILHA, worksheet="CADASTRO", data=df_atualizado)
+                    
+                    st.success(f"✅ {nome.upper()} cadastrado com sucesso!")
                     st.balloons()
                 except Exception as e:
-                    st.error(f"Erro ao salvar: {e}")
+                    st.error(f"Erro de Autenticação: Verifique se a Private Key está correta nos Secrets.")
+                    st.info(f"Detalhe técnico: {e}")
+                    st.warning("O erro 'Public Spreadsheet' indica que sua chave não foi reconhecida pelo Google.")
+            elif not cpf.isdigit():
+                st.error("⚠️ O CPF deve conter apenas números.")
+            elif len(cpf) != 11:
+                st.error("⚠️ O CPF deve ter exatamente 11 dígitos.")
             else:
-                st.warning("Preencha todos os campos.")
+                st.warning("⚠️ Preencha o nome completo.")
 
-    st.subheader("Lista de Promotores")
-    df_lista = carregar_dados("CADASTRO")
-    if not df_lista.empty:
-        st.dataframe(df_lista, use_container_width=True)
+    st.markdown("### Promotores Ativos")
+    try:
+        df_lista = conn.read(spreadsheet=URL_PLANILHA, worksheet="CADASTRO")
+        if not df_lista.empty:
+            st.dataframe(df_lista.sort_index(ascending=False), use_container_width=True)
+    except:
+        st.info("Aguardando novos registros...")
 
-elif menu == "Check-in/Out":
-    st.title("📅 Registro de Visita")
-    st.info("Funcionalidade em desenvolvimento. Use a aba de Cadastro para testar a conexão.")
-
+# --- 5. ABA: RELATÓRIOS ---
 elif menu == "Relatórios":
-    st.title("📊 Histórico")
-    df_visitas = carregar_dados("VISITAS")
-    st.dataframe(df_visitas, use_container_width=True)
+    st.title("📊 Painel de Controle")
+    st.markdown("---")
+    
+    try:
+        df = conn.read(spreadsheet=URL_PLANILHA, worksheet="CADASTRO")
+        if not df.empty:
+            st.metric("Total de Promotores", len(df))
+            st.dataframe(df, use_container_width=True)
+            
+            csv = df.to_csv(index=False).encode('utf-8')
+            st.download_button("Baixar Lista (CSV)", csv, "promotores.csv", "text/csv")
+        else:
+            st.warning("Nenhum promotor cadastrado ainda.")
+    except Exception as e:
+        st.error(f"Erro ao carregar dados: {e}")
