@@ -83,57 +83,61 @@ if menu == "Cadastro/Edição":
                     st.rerun()
         conn.close()
 
-# --- 6. ENTRADA E SAÍDA (COM PAINEL 'EM LOJA') ---
+# --- 6. ENTRADA E SAÍDA (LÓGICA DE PERSISTÊNCIA) ---
 elif menu == "Entrada e Saída":
     st.title("🕒 Registro de Fluxo")
     
     conn = sqlite3.connect('dados_mmfrios.db')
     
-    # --- Painel de Promotores em Loja ---
-    st.subheader("📍 Promotores em Loja Agora")
-    # Busca o último registro de cada promotor hoje
-    hoje = datetime.now().strftime("%d/%m/%Y")
-    query_hoje = f"SELECT v.nome, v.evento, v.data_hora, p.fornecedor FROM visitas v JOIN promotores p ON v.nome = p.nome WHERE v.data_hora LIKE '{hoje}%'"
-    df_hoje = pd.read_sql_query(query_hoje, conn)
-    
-    if not df_hoje.empty:
-        # Pega o último evento de cada um
-        df_hoje['data_hora_dt'] = pd.to_datetime(df_hoje['data_hora'], format="%d/%m/%Y %H:%M:%S")
-        ultimos_status = df_hoje.sort_values('data_hora_dt').groupby('nome').last().reset_index()
-        em_loja = ultimos_status[ultimos_status['evento'] == 'ENTRADA']
-        
-        if not em_loja.empty:
-            for i, row in em_loja.iterrows():
-                st.info(f"🟢 **{row['nome']}** - {row['fornecedor']} (Entrou às: {row['data_hora'].split(' ')[1]})")
-        else:
-            st.write("Nenhum promotor em loja no momento.")
+    # 1. Identificar quem está realmente na loja (último evento foi ENTRADA)
+    query_status = """
+        SELECT v.nome, v.evento, v.data_hora, p.fornecedor 
+        FROM visitas v 
+        JOIN promotores p ON v.nome = p.nome 
+        WHERE v.id IN (SELECT MAX(id) FROM visitas GROUP BY nome)
+    """
+    df_status = pd.read_sql_query(query_status, conn)
+    em_loja = df_status[df_status['evento'] == 'ENTRADA']
+
+    st.subheader("📍 Promotores Ativos no Momento")
+    if not em_loja.empty:
+        for _, row in em_loja.iterrows():
+            st.info(f"🟢 **{row['nome']}** ({row['fornecedor']}) - Entrou em: {row['data_hora']}")
     else:
-        st.write("Nenhum registro hoje.")
-    
+        st.write("Nenhum promotor com visita em aberto.")
+
     st.markdown("---")
-    
-    # --- Registro de Ações ---
+
+    # 2. Registro de Ações
     df_p = pd.read_sql_query("SELECT nome, fornecedor FROM promotores", conn)
     if not df_p.empty:
         df_p["display"] = df_p["nome"] + " (" + df_p["fornecedor"] + ")"
-        selecionado = st.selectbox("Selecione o Promotor para registrar:", [""] + df_p["display"].tolist())
+        selecionado = st.selectbox("Selecione o Promotor:", [""] + df_p["display"].tolist())
+        
         if selecionado:
             nome_real = selecionado.split(" (")[0]
             col1, col2 = st.columns(2)
             agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+            
+            # Verificar se ele já está na loja para avisar
+            ta_na_loja = nome_real in em_loja['nome'].values
+
             with col1:
-                if st.button("REGISTRAR ENTRADA 🟢", use_container_width=True):
+                btn_entrar = st.button("REGISTRAR ENTRADA 🟢", use_container_width=True, disabled=ta_na_loja)
+                if btn_entrar:
                     c = conn.cursor()
                     c.execute("INSERT INTO visitas (nome, evento, data_hora) VALUES (?, ?, ?)", (nome_real, "ENTRADA", agora))
                     conn.commit()
-                    st.success(f"Entrada registrada!")
+                    st.success("Entrada confirmada!")
                     st.rerun()
+            
             with col2:
-                if st.button("REGISTRAR SAÍDA 🔴", use_container_width=True):
+                btn_sair = st.button("REGISTRAR SAÍDA 🔴", use_container_width=True, disabled=not ta_na_loja)
+                if btn_sair:
                     c = conn.cursor()
                     c.execute("INSERT INTO visitas (nome, evento, data_hora) VALUES (?, ?, ?)", (nome_real, "SAÍDA", agora))
                     conn.commit()
-                    st.warning(f"Saída registrada!")
+                    st.warning("Saída confirmada!")
                     st.rerun()
     conn.close()
 
@@ -145,41 +149,55 @@ elif menu == "Relatórios":
     st.dataframe(df_v, use_container_width=True)
     conn.close()
 
-# --- 8. VISÃO COMERCIAL ---
+# --- 8. VISÃO COMERCIAL (LÓGICA DE CÁLCULO MELHORADA) ---
 elif menu == "Visão Comercial":
     st.title("📊 Gestão de Permanência em Loja")
     conn = sqlite3.connect('dados_mmfrios.db')
-    query = "SELECT v.nome, v.evento, v.data_hora, p.fornecedor FROM visitas v JOIN promotores p ON v.nome = p.nome"
+    query = "SELECT v.nome, v.evento, v.data_hora, p.fornecedor FROM visitas v JOIN promotores p ON v.nome = p.nome ORDER BY v.id ASC"
     df = pd.read_sql_query(query, conn)
     conn.close()
 
     if not df.empty:
         df['data_hora'] = pd.to_datetime(df['data_hora'], format="%d/%m/%Y %H:%M:%S")
-        df['data_apenas'] = df['data_hora'].dt.date
-        df_semana = df[df['data_hora'] >= (datetime.now() - timedelta(days=7))].copy()
-
-        if not df_semana.empty:
-            resultados = []
-            for (nome, data), group in df_semana.groupby(['nome', 'data_apenas']):
-                entrada = group[group['evento'] == 'ENTRADA']['data_hora'].min()
-                saida = group[group['evento'] == 'SAÍDA']['data_hora'].max()
-                fornecedor = group['fornecedor'].iloc[0]
-                
-                tempo_loja = "Em loja..."
-                if pd.notnull(entrada) and pd.notnull(saida) and saida > entrada:
-                    diff = saida - entrada
-                    horas, rem = divmod(diff.seconds, 3600)
+        
+        resultados = []
+        # Agrupamos por promotor e iteramos sobre seus registros para parear entrada/saída
+        for nome, grupo in df.groupby('nome'):
+            entrada_atual = None
+            for _, row in grupo.iterrows():
+                if row['evento'] == 'ENTRADA':
+                    entrada_atual = row['data_hora']
+                elif row['evento'] == 'SAÍDA' and entrada_atual is not None:
+                    saida_atual = row['data_hora']
+                    diff = saida_atual - entrada_atual
+                    horas, rem = divmod(diff.total_seconds(), 3600)
                     minutos, _ = divmod(rem, 60)
-                    tempo_loja = f"{horas}h {minutos}min"
-                
-                resultados.append({
-                    "Fornecedor": fornecedor,
-                    "Promotor": nome,
-                    "Data": data.strftime("%d/%m/%Y"),
-                    "Tempo em Loja": tempo_loja
-                })
+                    
+                    resultados.append({
+                        "Fornecedor": row['fornecedor'],
+                        "Promotor": nome,
+                        "Data": entrada_atual.strftime("%d/%m/%Y"),
+                        "Entrada": entrada_atual.strftime("%H:%M"),
+                        "Saída": saida_atual.strftime("%H:%M"),
+                        "Permanência": f"{int(horas)}h {int(minutos)}min"
+                    })
+                    entrada_atual = None # Reseta para o próximo par
             
+            # Se terminou o laço e sobrou uma entrada sem saída:
+            if entrada_atual is not None:
+                # Verificar se a entrada foi nos últimos 7 dias para mostrar como "Em loja"
+                if entrada_atual > (datetime.now() - timedelta(days=7)):
+                    resultados.append({
+                        "Fornecedor": grupo['fornecedor'].iloc[0],
+                        "Promotor": nome,
+                        "Data": entrada_atual.strftime("%d/%m/%Y"),
+                        "Entrada": entrada_atual.strftime("%H:%M"),
+                        "Saída": "---",
+                        "Permanência": "Em loja..."
+                    })
+
+        if resultados:
             df_final = pd.DataFrame(resultados).sort_values(by="Data", ascending=False)
             st.table(df_final)
         else:
-            st.info("Nenhuma visita nos últimos 7 dias.")
+            st.info("Nenhuma atividade recente.")
