@@ -7,12 +7,13 @@ from datetime import datetime
 st.set_page_config(page_title="Sistema MM Frios", layout="wide", page_icon="❄️")
 
 # --- 2. CONEXÃO ---
-# Tenta conectar usando os segredos locais ou da nuvem
 try:
+    # Esta linha força o Streamlit a buscar o arquivo secrets.toml na pasta .streamlit
     conn = st.connection("gsheets", type=GSheetsConnection)
     URL_PLANILHA = "https://docs.google.com/spreadsheets/d/1Wsx93H2clHbwc95J3vZ4j0AMDeOHOg3wBKiomtyDljI/edit#gid=0"
 except Exception as e:
-    st.error(f"Erro de conexão. Certifique-se de que o arquivo .streamlit/secrets.toml existe. Detalhe: {e}")
+    st.error(f"Erro de configuração: {e}")
+    st.info("O arquivo deve estar em: .streamlit/secrets.toml (sem o .txt no final)")
     st.stop()
 
 # --- 3. MENU LATERAL ---
@@ -30,24 +31,21 @@ if menu == "Cadastro de Promotor":
         if submit:
             if nome and len(cpf) == 11:
                 try:
-                    # Lê os dados atuais
                     df_antigo = conn.read(spreadsheet=URL_PLANILHA, worksheet="CADASTRO")
                     novo = pd.DataFrame([{"NOME": nome.upper().strip(), "CPF": cpf}])
-                    # Adiciona o novo e atualiza a planilha
                     df_final = pd.concat([df_antigo, novo], ignore_index=True)
+                    
                     conn.update(spreadsheet=URL_PLANILHA, worksheet="CADASTRO", data=df_final)
                     st.success(f"✅ {nome.upper()} cadastrado com sucesso!")
-                    st.balloons()
                 except Exception as e:
                     st.error(f"Erro ao salvar: {e}")
             else:
-                st.warning("Preencha os dados corretamente.")
+                st.warning("Preencha Nome e CPF corretamente.")
 
 # --- 5. ABA: ENTRADA E SAÍDA ---
 elif menu == "Entrada e Saída":
-    st.title("🕒 Registro de Fluxo")
+    st.title("🕒 Fluxo de Acesso")
     try:
-        # Busca a lista de promotores já cadastrados
         df_p = conn.read(spreadsheet=URL_PLANILHA, worksheet="CADASTRO")
         if not df_p.empty:
             lista = sorted(df_p["NOME"].unique().tolist())
@@ -58,31 +56,29 @@ elif menu == "Entrada e Saída":
                 agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                 
                 with col1:
+                    # Atualizado para a versão mais recente do Streamlit
                     if st.button("REGISTRAR ENTRADA", type="primary", use_container_width=True):
                         df_v = conn.read(spreadsheet=URL_PLANILHA, worksheet="VISITAS")
                         nova_v = pd.DataFrame([{"NOME": selecionado, "EVENTO": "ENTRADA", "DATA_HORA": agora}])
                         conn.update(spreadsheet=URL_PLANILHA, worksheet="VISITAS", data=pd.concat([df_v, nova_v], ignore_index=True))
-                        st.success(f"Entrada registrada para {selecionado} às {agora}")
+                        st.success(f"Entrada registrada: {agora}")
                 
                 with col2:
                     if st.button("REGISTRAR SAÍDA", use_container_width=True):
                         df_v = conn.read(spreadsheet=URL_PLANILHA, worksheet="VISITAS")
                         nova_v = pd.DataFrame([{"NOME": selecionado, "EVENTO": "SAÍDA", "DATA_HORA": agora}])
                         conn.update(spreadsheet=URL_PLANILHA, worksheet="VISITAS", data=pd.concat([df_v, nova_v], ignore_index=True))
-                        st.warning(f"Saída registrada para {selecionado} às {agora}")
-        else:
-            st.warning("Nenhum promotor cadastrado para registrar acesso.")
+                        st.warning(f"Saída registrada: {agora}")
     except Exception as e:
         st.error(f"Erro ao carregar dados: {e}")
 
 # --- 6. ABA: RELATÓRIOS ---
 elif menu == "Relatórios":
     st.title("📊 Painel de Controle")
-    aba = st.radio("Visualizar:", ["Promotores Cadastrados", "Histórico de Visitas"], horizontal=True)
-    
+    aba = st.radio("Visualizar:", ["Promotores", "Visitas"], horizontal=True)
     try:
-        nome_aba = "CADASTRO" if aba == "Promotores Cadastrados" else "VISITAS"
-        df = conn.read(spreadsheet=URL_PLANILHA, worksheet=nome_aba)
+        ws = "CADASTRO" if aba == "Promotores" else "VISITAS"
+        df = conn.read(spreadsheet=URL_PLANILHA, worksheet=ws)
         st.dataframe(df, use_container_width=True)
     except:
-        st.info("Aguardando registros para exibir dados.")
+        st.info("Aguardando novos registros...")
