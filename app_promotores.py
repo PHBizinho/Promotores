@@ -7,7 +7,7 @@ import os
 # --- 1. CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Sistema MM Frios", layout="wide", page_icon="❄️")
 
-# --- 2. BANCO DE DADOS (Estrutura Robusta) ---
+# --- 2. BANCO DE DADOS ---
 def criar_tabelas():
     conn = sqlite3.connect('dados_mmfrios.db')
     c = conn.cursor()
@@ -24,7 +24,7 @@ def criar_tabelas():
 
 criar_tabelas()
 
-# --- 3. RECURSOS EXTERNOS (Logo e Excel) ---
+# --- 3. RECURSOS EXTERNOS (LOGO E FORNECEDORES) ---
 if os.path.exists("LOGO_CORTE-FACIL2.png"):
     st.sidebar.image("LOGO_CORTE-FACIL2.png", use_container_width=True)
 
@@ -35,13 +35,13 @@ try:
     lista_fornecedores = sorted(lista_fornecedores)
 except:
     lista_fornecedores = []
-    st.sidebar.warning("Arquivo 'BASE_FORNECEDORES.xlsx' não encontrado.")
+    st.sidebar.warning("Atenção: 'BASE_FORNECEDORES.xlsx' não encontrado.")
 
-# --- 4. NAVEGAÇÃO LATERAL ---
+# --- 4. NAVEGAÇÃO ---
 st.sidebar.markdown("---")
 menu = st.sidebar.radio("Navegação Principal:", ["Cadastro/Edição", "Entrada e Saída", "Relatórios Gerais", "Visão Comercial"])
 
-# --- 5. TELA: CADASTRO E EDIÇÃO ---
+# --- 5. CADASTRO E EDIÇÃO ---
 if menu == "Cadastro/Edição":
     st.title("👤 Gestão de Promotores")
     tab_cad, tab_edit = st.tabs(["🆕 Novo Cadastro", "✏️ Editar Cadastro"])
@@ -88,22 +88,22 @@ if menu == "Cadastro/Edição":
                     st.rerun()
         conn.close()
 
-# --- 6. TELA: ENTRADA E SAÍDA (Lógica de Persistência) ---
+# --- 6. ENTRADA E SAÍDA ---
 elif menu == "Entrada e Saída":
-    st.title("🕒 Controle de Acesso em Tempo Real")
+    st.title("🕒 Controle de Acesso")
     conn = sqlite3.connect('dados_mmfrios.db')
     
-    # Lista de quem está na loja agora (último evento = ENTRADA)
+    # Identificar quem está na loja
     q_status = "SELECT v.nome, v.evento, v.data_hora, p.fornecedor FROM visitas v JOIN promotores p ON v.nome = p.nome WHERE v.id IN (SELECT MAX(id) FROM visitas GROUP BY nome)"
     df_status = pd.read_sql_query(q_status, conn)
     em_loja = df_status[df_status['evento'] == 'ENTRADA']
 
-    st.subheader("📍 Promotores Ativos na Loja")
+    st.subheader("📍 Ativos na Loja Agora")
     if not em_loja.empty:
         for _, row in em_loja.iterrows():
-            st.info(f"🟢 **{row['nome']}** ({row['fornecedor']}) - Entrou em: {row['data_hora']}")
+            st.info(f"🟢 **{row['nome']}** ({row['fornecedor']}) - Entrou às: {row['data_hora'].split(' ')[1]}")
     else:
-        st.write("Não há promotores com visita aberta.")
+        st.write("Nenhum promotor em loja.")
 
     st.markdown("---")
     df_p = pd.read_sql_query("SELECT nome, fornecedor FROM promotores", conn)
@@ -127,17 +127,17 @@ elif menu == "Entrada e Saída":
                     st.rerun()
     conn.close()
 
-# --- 7. TELA: RELATÓRIOS GERAIS ---
+# --- 7. RELATÓRIOS GERAIS ---
 elif menu == "Relatórios Gerais":
-    st.title("📊 Histórico de Registros")
+    st.title("📊 Histórico Completo")
     conn = sqlite3.connect('dados_mmfrios.db')
     df_v = pd.read_sql_query("SELECT * FROM visitas ORDER BY id DESC", conn)
     st.dataframe(df_v, use_container_width=True)
     conn.close()
 
-# --- 8. TELA: VISÃO COMERCIAL (O DIFERENCIAL) ---
+# --- 8. VISÃO COMERCIAL (PREMIUM DASHBOARD) ---
 elif menu == "Visão Comercial":
-    st.title("📊 Dashboard Comercial - Performance de Fornecedores")
+    st.title("📊 Performance Comercial de Fornecedores")
     
     conn = sqlite3.connect('dados_mmfrios.db')
     query = "SELECT v.nome, v.evento, v.data_hora, p.fornecedor FROM visitas v JOIN promotores p ON v.nome = p.nome ORDER BY v.id ASC"
@@ -149,7 +149,6 @@ elif menu == "Visão Comercial":
         hoje = datetime.now()
         df_semana = df[df['data_hora'] >= (hoje - timedelta(days=7))].copy()
 
-        # Processamento de permanência
         resultados = []
         for nome, grupo in df_semana.groupby(['nome', df_semana['data_hora'].dt.date]):
             entrada = grupo[grupo['evento'] == 'ENTRADA']['data_hora'].min()
@@ -172,47 +171,54 @@ elif menu == "Visão Comercial":
 
             resultados.append({
                 "Data": nome[1].strftime("%d/%m/%Y"),
-                "Fornecedor": forn_at,
-                "Promotor": nome[0],
-                "Permanência": perm,
-                "Status": status,
-                "minutos": minutos
+                "Fornecedor": forn_at, "Promotor": nome[0],
+                "Entrada": entrada.strftime("%H:%M") if pd.notnull(entrada) else "---",
+                "Saída": saida.strftime("%H:%M") if pd.notnull(saida) and status == "✅ Concluída" else "---",
+                "Permanência": perm, "Status": status, "minutos": minutos
             })
 
         df_res = pd.DataFrame(resultados)
 
-        # --- KPI CARDS ---
-        st.markdown("### Indicadores da Semana")
+        # KPIs COLORIDOS
+        st.subheader("🚀 Indicadores Estratégicos (7 dias)")
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Empresas Ativas", df_res['Fornecedor'].nunique())
-        k2.metric("Total Visitas", len(df_res))
-        media_min = df_res[df_res['minutos'] > 0]['minutos'].mean()
-        k3.metric("Tempo Médio", f"{int(media_min if not pd.isna(media_min) else 0)} min")
-        k4.metric("Em Loja Agora", len(df_res[df_res['Status'] == "🟢 Em Loja"]))
+        k1.metric("Empresas Ativas", df_res['Fornecedor'].nunique(), delta="Presença")
+        k2.metric("Total de Visitas", len(df_res), delta="Registros")
+        media_min = int(df_res[df_res['minutos'] > 0]['minutos'].mean() if not df_res[df_res['minutos'] > 0].empty else 0)
+        k3.metric("Média Permanência", f"{media_min} min", delta="Tempo em Loja", delta_color="normal" if media_min >= 30 else "inverse")
+        em_loja_count = len(df_res[df_res['Status'] == "🟢 Em Loja"])
+        k4.metric("Agora na Loja", em_loja_count, delta="Promotores", delta_color="normal")
 
         st.markdown("---")
-        
-        # --- RANKING E DETALHAMENTO ---
-        col_rank, col_table = st.columns([1, 2])
-        
-        with col_rank:
-            st.subheader("🏆 Ranking Presença")
-            ranking = df_res['Fornecedor'].value_counts().reset_index()
-            ranking.columns = ['Fornecedor', 'Visitas']
-            st.dataframe(ranking, hide_index=True)
 
-        with col_table:
-            st.subheader("📋 Detalhes (Últimos 7 dias)")
+        # RANKING EM DESTAQUE (LARGURA TOTAL)
+        st.subheader("🏆 Ranking de Assiduidade")
+        ranking = df_res['Fornecedor'].value_counts().reset_index()
+        ranking.columns = ['Fornecedor', 'Visitas']
+        st.dataframe(
+            ranking, 
+            column_config={"Visitas": st.column_config.ProgressColumn("Visitas na Semana", format="%d", min_value=0, max_value=int(ranking['Visitas'].max()))},
+            hide_index=True, use_container_width=True
+        )
+
+        st.markdown("---")
+
+        # DETALHAMENTO COM CORES
+        st.subheader("📋 Detalhamento das Atividades")
+        c_f1, c_f2 = st.columns([2, 1])
+        with c_f1:
             f_forn = st.multiselect("Filtrar Empresa:", sorted(df_res['Fornecedor'].unique()))
-            df_disp = df_res.copy()
-            if f_forn:
-                df_disp = df_disp[df_disp['Fornecedor'].isin(f_forn)]
-            
-            st.dataframe(df_disp.drop(columns=['minutos']).sort_values(by="Data", ascending=False), use_container_width=True)
+        with c_f2:
+            f_stat = st.multiselect("Filtrar Status:", sorted(df_res['Status'].unique()))
 
-        # --- EXPORTAÇÃO ---
-        st.markdown("---")
+        df_disp = df_res.copy()
+        if f_forn: df_disp = df_disp[df_disp['Fornecedor'].isin(f_forn)]
+        if f_stat: df_disp = df_disp[df_disp['Status'].isin(f_stat)]
+        
+        st.dataframe(df_disp.drop(columns=['minutos']).sort_values(by="Data", ascending=False), use_container_width=True, hide_index=True)
+
+        # EXPORTAÇÃO
         csv = df_disp.to_csv(index=False).encode('utf-8-sig')
-        st.download_button("📥 Baixar Relatório Comercial (Excel/CSV)", csv, "relatorio_comercial.csv", "text/csv")
+        st.download_button("📥 Baixar Relatório de Performance (CSV)", csv, f"relatorio_comercial_{hoje.strftime('%d_%m')}.csv", "text/csv", use_container_width=True)
     else:
-        st.info("Sem dados de visitas na última semana.")
+        st.info("Nenhuma visita registrada recentemente.")
