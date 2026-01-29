@@ -63,9 +63,14 @@ except:
     lista_fornecedores = []
 
 # --- 4. NAVEGAÇÃO ---
+st.sidebar.markdown("---")
 menu = st.sidebar.radio("Navegação:", ["Cadastro/Edição", "Entrada e Saída", "Relatórios Gerais", "Visão Comercial"])
 
-# --- 5. CADASTRO E EDIÇÃO (RESTAURADO) ---
+# Rodapé na Coluna Fixa (3)
+st.sidebar.markdown("---")
+st.sidebar.caption("Desenvolvido por: Paulo Henrique - Setor Fiscal")
+
+# --- 5. CADASTRO E EDIÇÃO ---
 if menu == "Cadastro/Edição":
     st.title("👤 Gestão de Promotores")
     tab1, tab2 = st.tabs(["🆕 Novo Cadastro", "✏️ Editar Cadastro"])
@@ -85,49 +90,54 @@ if menu == "Cadastro/Edição":
 
     with tab2:
         st.subheader("🔒 Área de Edição")
-        senha = st.text_input("Senha:", type="password")
+        senha = st.text_input("Senha de Administrador:", type="password")
         if senha == "admin123":
             conn = sqlite3.connect('dados_mmfrios.db')
             df_edit = pd.read_sql_query("SELECT * FROM promotores", conn)
             if not df_edit.empty:
-                p_sel = st.selectbox("Selecionar:", df_edit['nome'].tolist())
+                p_sel = st.selectbox("Selecionar Promotor:", df_edit['nome'].tolist())
                 dados = df_edit[df_edit['nome'] == p_sel].iloc[0]
                 with st.form("edit"):
                     en = st.text_input("Nome:", value=dados['nome'])
                     ec = st.text_input("CPF:", value=dados['cpf'])
                     idx = lista_fornecedores.index(dados['fornecedor']) if dados['fornecedor'] in lista_fornecedores else 0
                     ef = st.selectbox("Fornecedor:", lista_fornecedores, index=idx)
-                    if st.form_submit_button("Atualizar"):
+                    if st.form_submit_button("Atualizar Dados"):
                         conn.execute("UPDATE promotores SET nome=?, cpf=?, fornecedor=? WHERE id=?", (en.upper(), ec, ef, dados['id']))
                         conn.commit()
                         st.success("✅ Atualizado!")
                         st.rerun()
             conn.close()
 
-# --- 6. ENTRADA E SAÍDA (RESET AO INICIAL) ---
+# --- 6. ENTRADA E SAÍDA (1 e 4) ---
 elif menu == "Entrada e Saída":
     st.title("🕒 Controle de Fluxo")
     conn = sqlite3.connect('dados_mmfrios.db')
     
-    # Busca ativos
+    # 1. VISUALIZAÇÃO DE QUEM ESTÁ EM LOJA (Para troca de turno)
     df_v = pd.read_sql_query("SELECT v.nome, v.evento, v.data_hora, p.fornecedor FROM visitas v JOIN promotores p ON v.nome = p.nome", conn)
     em_loja = []
-    for nome in df_v['nome'].unique():
-        ult = df_v[df_v['nome'] == nome].iloc[-1]
-        if ult['evento'] == 'ENTRADA': em_loja.append(ult)
+    if not df_v.empty:
+        for nome in df_v['nome'].unique():
+            ult = df_v[df_v['nome'] == nome].iloc[-1]
+            if ult['evento'] == 'ENTRADA': em_loja.append(ult)
     
+    st.subheader("📍 Promotores em Loja (Ativos)")
     if em_loja:
-        st.info(f"Existem {len(em_loja)} promotores em loja agora.")
+        df_presentes = pd.DataFrame(em_loja)[['nome', 'fornecedor', 'data_hora']]
+        df_presentes.columns = ['Nome', 'Fornecedor', 'Hora de Entrada']
+        st.dataframe(df_presentes, use_container_width=True, hide_index=True)
+    else:
+        st.info("Nenhum promotor em loja no momento.")
 
-    # Selectbox de registro
+    st.markdown("---")
+
+    # Registro de entrada/saída
     df_p = pd.read_sql_query("SELECT nome, fornecedor FROM promotores", conn)
     df_p["disp"] = df_p["nome"] + " (" + df_p["fornecedor"] + ")"
     
-    # Criamos um estado para o selectbox para poder limpar após a saída
-    if 'promotor_selecionado' not in st.session_state:
-        st.session_state.promotor_selecionado = ""
-
-    sel = st.selectbox("Identifique o Promotor:", [""] + df_p["disp"].tolist(), key="registro_sel")
+    # Selectbox com reset automático (4)
+    sel = st.selectbox("Identifique o Promotor para Registro:", [""] + df_p["disp"].tolist(), key="reg_ponto")
     
     if sel:
         n_real = sel.split(" (")[0]
@@ -139,18 +149,17 @@ elif menu == "Entrada e Saída":
             if st.button("REGISTRAR ENTRADA 🟢", disabled=check_loja, use_container_width=True):
                 conn.execute("INSERT INTO visitas (nome, evento, data_hora) VALUES (?,?,?)", (n_real, "ENTRADA", agora))
                 conn.commit()
-                st.success("Entrada Registrada!")
+                st.success(f"Entrada de {n_real} confirmada!")
                 st.rerun()
         with c2:
             if check_loja:
+                # 4. Saída volta para o estado inicial
                 with st.popover("REGISTRAR SAÍDA 🔴", use_container_width=True):
-                    st.write("Deseja confirmar a saída?")
-                    if st.button("Confirmar Saída"):
+                    st.write(f"Deseja finalizar a visita de {n_real}?")
+                    if st.button("Sim, confirmar saída"):
                         conn.execute("INSERT INTO visitas (nome, evento, data_hora) VALUES (?,?,?)", (n_real, "SAÍDA", agora))
                         conn.commit()
-                        # Resetando para a tela inicial
-                        st.success("Saída registrada! Voltando...")
-                        st.rerun()
+                        st.rerun() # Isso limpa a seleção e volta ao início
     conn.close()
 
 # --- 7. RELATÓRIOS ---
@@ -169,7 +178,7 @@ elif menu == "Relatórios Gerais":
     st.dataframe(df[['data_hora', 'nome', 'fornecedor', 'evento']], use_container_width=True, hide_index=True)
     conn.close()
 
-# --- 8. VISÃO COMERCIAL ---
+# --- 8. VISÃO COMERCIAL (2) ---
 elif menu == "Visão Comercial":
     st_autorefresh(interval=300000, key="auto")
     st.title("📊 Painel de Performance de Fornecedores")
@@ -190,18 +199,34 @@ elif menu == "Visão Comercial":
             f_data.append({
                 "Data": dia.strftime("%d/%m/%Y"), "Fornecedor": gp['fornecedor'].iloc[0],
                 "Promotor": nome, "Permanência": f"{int(minutos//60)}h {int(minutos%60)}min" if minutos > 0 else "Em Loja",
-                "Status": "✅ Ok" if minutos > 0 else "🟢 Ativo", "min": minutos
+                "Status": "✅ Concluída" if minutos > 0 else "🟢 Ativo", "min": minutos
             })
 
         df_final = pd.DataFrame(f_data)
         c1, c2, c3 = st.columns(3)
         c1.metric("Empresas/Semana", df_final['Fornecedor'].nunique())
         c2.metric("Total Visitas", len(df_final))
-        c3.metric("Tempo Médio", f"{int(df_final[df_final['min']>0]['min'].mean() if not df_final.empty else 0)} min")
+        media = int(df_final[df_final['min']>0]['min'].mean() if not df_final[df_final['min']>0].empty else 0)
+        c3.metric("Média Permanência", f"{media} min")
 
-        st.subheader("🏆 Ranking de Assiduidade")
+        st.subheader("🏆 Ranking de Assiduidade (Visitas Totais)")
         rank = df_final['Fornecedor'].value_counts().reset_index()
-        st.dataframe(rank, column_config={"count": st.column_config.ProgressColumn("Volume")}, use_container_width=True, hide_index=True)
+        rank.columns = ['Fornecedor', 'Visitas']
+        
+        # 2. Ranking mostrando números reais (format="%d")
+        st.dataframe(
+            rank, 
+            column_config={
+                "Visitas": st.column_config.ProgressColumn(
+                    "Quantidade de Visitas",
+                    format="%d",
+                    min_value=0,
+                    max_value=int(rank['Visitas'].max())
+                )
+            }, 
+            use_container_width=True, 
+            hide_index=True
+        )
 
         st.subheader("📋 Relatório Detalhado")
         st.dataframe(df_final.drop(columns=['min']).sort_values(by="Data", ascending=False), use_container_width=True, hide_index=True)
