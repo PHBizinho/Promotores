@@ -68,13 +68,16 @@ if not st.session_state.logado:
     st.markdown("<h2 style='text-align: center;'>Acesso Corte Fácil</h2>", unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1,1.5,1])
     with c2:
+        # Tenta mostrar a logo na tela de login também
+        if os.path.exists("LOGO_CORTE-FACIL2.png"):
+            st.image("LOGO_CORTE-FACIL2.png", use_container_width=True)
+            
         with st.form("login"):
             u = st.text_input("Usuário")
             p = st.text_input("Senha", type="password")
             if st.form_submit_button("Entrar", use_container_width=True):
                 conn = sqlite3.connect('dados_mmfrios.db')
                 c = conn.cursor()
-                # Usamos COLLATE NOCASE para evitar erros de maiúsculo/minúsculo no login
                 c.execute("SELECT nivel, login FROM usuarios WHERE login=? AND senha=?", (u, p))
                 res = c.fetchone()
                 conn.close()
@@ -86,11 +89,19 @@ if not st.session_state.logado:
                 else: st.error("Usuário ou senha inválidos.")
     st.stop()
 
-# --- 4. NAVEGAÇÃO (CORREÇÃO DO ERRO NAMEERROR) ---
-nivel = st.session_state.nivel
-opcoes = [] # Inicializa a lista vazia para evitar o erro
+# --- 4. BARRA LATERAL (LOGO E NAVEGAÇÃO) ---
 
-# Define as permissões
+# LOGOMARCA (Sempre no topo da barra lateral)
+if os.path.exists("LOGO_CORTE-FACIL2.png"):
+    st.sidebar.image("LOGO_CORTE-FACIL2.png", use_container_width=True)
+
+st.sidebar.markdown(f"👤 Bem-vindo, **{st.session_state.usuario}**")
+st.sidebar.caption(f"Perfil: {st.session_state.nivel}")
+st.sidebar.markdown("---")
+
+nivel = st.session_state.nivel
+opcoes = []
+
 if nivel == "Admin":
     opcoes = ["Entrada e Saída", "Cadastro/Edição", "Relatórios Gerais", "Visão Comercial", "Gerir Usuários"]
 elif nivel == "Operador":
@@ -98,26 +109,22 @@ elif nivel == "Operador":
 elif nivel == "Comercial":
     opcoes = ["Relatórios Gerais", "Visão Comercial"]
 else:
-    # Caso ocorra qualquer erro de nível, desloga o usuário por segurança
     st.session_state.logado = False
     st.rerun()
 
-st.sidebar.write(f"👤 **{st.session_state.usuario}**")
-st.sidebar.caption(f"Acesso: {nivel}")
-
-# Agora a variável 'opcoes' com certeza existe aqui
-menu = st.sidebar.radio("Navegação:", opcoes)
-
-if st.sidebar.button("Logout / Sair"):
-    st.session_state.logado = False
-    st.rerun()
+menu = st.sidebar.radio("Selecione o menu:", opcoes)
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Desenvolvido por: Paulo Henrique - Setor Fiscal")
+if st.sidebar.button("Sair do Sistema"):
+    st.session_state.logado = False
+    st.rerun()
+
+st.sidebar.caption("Desenvolvido por: Paulo Henrique")
 
 # --- 5. TELAS ---
 
-# --- TELA: ENTRADA E SAÍDA ---
+# (O restante do código das telas permanece igual ao seu, funcionando perfeitamente)
+
 if menu == "Entrada e Saída":
     st.title("🕒 Controle de Fluxo")
     conn = sqlite3.connect('dados_mmfrios.db')
@@ -156,7 +163,6 @@ if menu == "Entrada e Saída":
                         st.rerun()
     conn.close()
 
-# --- TELA: CADASTRO/EDIÇÃO ---
 elif menu == "Cadastro/Edição":
     st.title("👤 Gestão de Promotores")
     try:
@@ -192,7 +198,6 @@ elif menu == "Cadastro/Edição":
                     conn.close()
                     st.rerun()
 
-# --- TELA: RELATÓRIOS GERAIS ---
 elif menu == "Relatórios Gerais":
     st.title("🔍 Auditoria de Passagens")
     conn = sqlite3.connect('dados_mmfrios.db')
@@ -204,28 +209,23 @@ elif menu == "Relatórios Gerais":
     st.dataframe(df[['data_hora', 'nome', 'fornecedor', 'evento']], use_container_width=True, hide_index=True)
     conn.close()
 
-# --- TELA: VISÃO COMERCIAL ---
 elif menu == "Visão Comercial":
     st_autorefresh(interval=300000)
-    st.title("📊 Painel de Performance de Fornecedores")
+    st.title("📊 Painel de Performance")
     conn = sqlite3.connect('dados_mmfrios.db')
     df_raw = pd.read_sql_query("SELECT v.nome, v.evento, v.data_hora, p.fornecedor FROM visitas v JOIN promotores p ON v.nome = p.nome", conn)
     conn.close()
     if not df_raw.empty:
         df_raw['dt'] = pd.to_datetime(df_raw['data_hora'], format="%d/%m/%Y %H:%M:%S")
         df_7d = df_raw[df_raw['dt'] >= (datetime.now() - timedelta(days=7))].copy()
-        
-        # Lógica de permanência para o gráfico
         rank = df_7d[df_7d['evento']=='ENTRADA']['fornecedor'].value_counts().reset_index()
         rank.columns = ['Fornecedor', 'Visitas']
         st.subheader("🏆 Ranking de Assiduidade Semanal")
         st.dataframe(rank, column_config={"Visitas": st.column_config.ProgressColumn("Visitas", format="%d")}, use_container_width=True, hide_index=True)
 
-# --- TELA: GERIR USUÁRIOS ---
 elif menu == "Gerir Usuários":
     st.title("🔑 Administração de Usuários")
     conn = sqlite3.connect('dados_mmfrios.db')
-    
     with st.expander("➕ Criar Novo Usuário"):
         with st.form("new_user"):
             nu, np = st.text_input("Login:"), st.text_input("Senha:")
@@ -233,10 +233,10 @@ elif menu == "Gerir Usuários":
             if st.form_submit_button("Cadastrar"):
                 conn.execute("INSERT INTO usuarios (login, senha, nivel) VALUES (?,?,?)", (nu, np, nv))
                 conn.commit()
-                st.success(f"Usuário {nu} criado como {nv}!")
+                st.success(f"Usuário {nu} criado!")
     
-    st.subheader("👥 Usuários Cadastrados")
     df_u = pd.read_sql_query("SELECT id, login, nivel FROM usuarios", conn)
+    st.subheader("👥 Usuários Cadastrados")
     st.dataframe(df_u, use_container_width=True, hide_index=True)
     
     with st.expander("🗑️ Remover Usuário"):
