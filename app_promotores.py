@@ -44,7 +44,7 @@ def gerenciar_banco():
     if not c.fetchone():
         c.execute("INSERT INTO usuarios (login, senha, nivel) VALUES ('admin', '123', 'Admin')")
     
-    # Lógica de Fechamento Automático
+    # Lógica de Fechamento Automático (Meia-noite)
     df_v = pd.read_sql_query("SELECT * FROM visitas ORDER BY id ASC", conn)
     if not df_v.empty:
         for nome in df_v['nome'].unique():
@@ -88,7 +88,7 @@ if not st.session_state.logado:
                 else: st.error("Usuário ou senha inválidos.")
     st.stop()
 
-# --- 4. BARRA LATERAL ---
+# --- 4. BARRA LATERAL (NAVEGAÇÃO E LOGO) ---
 if os.path.exists("LOGO_CORTE-FACIL2.png"):
     st.sidebar.image("LOGO_CORTE-FACIL2.png", use_container_width=True)
 
@@ -105,6 +105,9 @@ elif nivel == "Operador":
     opcoes = ["Entrada e Saída", "Cadastro/Edição"]
 elif nivel == "Comercial":
     opcoes = ["Relatórios Gerais", "Visão Comercial"]
+else:
+    st.session_state.logado = False
+    st.rerun()
 
 menu = st.sidebar.radio("Navegação:", opcoes)
 
@@ -113,7 +116,9 @@ if st.sidebar.button("Logout / Sair"):
     st.session_state.logado = False
     st.rerun()
 
-# --- 5. TELAS ---
+st.sidebar.caption("Desenvolvido por: Paulo Henrique")
+
+# --- 5. TELAS DO SISTEMA ---
 
 # --- TELA: ENTRADA E SAÍDA ---
 if menu == "Entrada e Saída":
@@ -129,7 +134,7 @@ if menu == "Entrada e Saída":
     st.subheader("📍 Promotores em Loja")
     if em_loja:
         st.dataframe(pd.DataFrame(em_loja)[['nome', 'fornecedor', 'data_hora']], use_container_width=True, hide_index=True)
-    else: st.info("Ninguém em loja.")
+    else: st.info("Ninguém em loja no momento.")
 
     df_p = pd.read_sql_query("SELECT nome, fornecedor FROM promotores", conn)
     df_p["disp"] = df_p["nome"] + " (" + df_p["fornecedor"] + ")"
@@ -173,13 +178,13 @@ elif menu == "Cadastro/Edição":
                 conn.execute("INSERT INTO promotores (nome, cpf, fornecedor) VALUES (?,?,?)", (n.upper(), c, f))
                 conn.commit()
                 conn.close()
-                st.success("✅ Salvo!")
+                st.success("✅ Salvo com sucesso!")
 
     with tab2:
         conn = sqlite3.connect('dados_mmfrios.db')
         df_e = pd.read_sql_query("SELECT * FROM promotores", conn)
         if not df_e.empty:
-            p_sel = st.selectbox("Selecionar:", df_e['nome'].tolist())
+            p_sel = st.selectbox("Selecionar Promotor:", df_e['nome'].tolist())
             d = df_e[df_e['nome'] == p_sel].iloc[0]
             with st.form("edit"):
                 en, ec = st.text_input("Nome:", d['nome']), st.text_input("CPF:", d['cpf'])
@@ -202,7 +207,7 @@ elif menu == "Relatórios Gerais":
     st.dataframe(df[['data_hora', 'nome', 'fornecedor', 'evento']], use_container_width=True, hide_index=True)
     conn.close()
 
-# --- TELA: VISÃO COMERCIAL (KPIs de volta!) ---
+# --- TELA: VISÃO COMERCIAL (KPIs E ARREDONDAMENTO) ---
 elif menu == "Visão Comercial":
     st_autorefresh(interval=300000)
     st.title("📊 Painel de Performance de Fornecedores")
@@ -221,14 +226,17 @@ elif menu == "Visão Comercial":
             sai = gp[gp['evento'].str.contains('SAÍDA')]['dt'].max()
             minutos = (sai - ent).total_seconds()/60 if pd.notnull(sai) and len(gp) > 1 else 0
             f_data.append({
-                "Data": dia.strftime("%d/%m/%Y"), "Fornecedor": gp['fornecedor'].iloc[0],
-                "Promotor": nome, "Permanência": f"{int(minutos//60)}h {int(minutos%60)}min" if minutos > 0 else "Em Loja",
-                "Status": "✅ Concluída" if minutos > 0 else "🟢 Ativo", "min": minutos
+                "Data": dia.strftime("%d/%m/%Y"), 
+                "Fornecedor": gp['fornecedor'].iloc[0],
+                "Promotor": nome, 
+                "Permanência": f"{int(minutos//60)}h {int(minutos%60)}min" if minutos > 0 else "Em Loja",
+                "Status": "✅ Concluída" if minutos > 0 else "🟢 Ativo", 
+                "min": round(minutos, 2)  # AJUSTE PARA O EXCEL
             })
 
         df_final = pd.DataFrame(f_data)
         
-        # KPIs no TOPO
+        # KPIs de volta no topo
         c1, c2, c3 = st.columns(3)
         c1.metric("Empresas/Semana", df_final['Fornecedor'].nunique())
         c2.metric("Total Visitas", len(df_final))
@@ -246,7 +254,7 @@ elif menu == "Visão Comercial":
         csv = df_final.to_csv(sep=';', index=False, encoding='utf-8-sig').encode('utf-8-sig')
         st.download_button("📥 Baixar Relatório (CSV)", csv, "performance_mmfrios.csv", "text/csv", use_container_width=True)
 
-# --- TELA: GERIR USUÁRIOS (Com Edição de Usuários!) ---
+# --- TELA: GERIR USUÁRIOS (ADMIN APENAS) ---
 elif menu == "Gerir Usuários":
     st.title("🔑 Administração de Usuários")
     conn = sqlite3.connect('dados_mmfrios.db')
@@ -265,20 +273,22 @@ elif menu == "Gerir Usuários":
 
     with t2:
         df_u = pd.read_sql_query("SELECT * FROM usuarios", conn)
-        u_edit = st.selectbox("Selecione o usuário para editar:", df_u['login'].tolist())
-        dados_u = df_u[df_u['login'] == u_edit].iloc[0]
-        with st.form("edit_user"):
-            new_login = st.text_input("Editar Login:", value=dados_u['login'])
-            new_senha = st.text_input("Nova Senha:", value=dados_u['senha'])
-            new_nivel = st.selectbox("Editar Nível:", ["Operador", "Comercial", "Admin"], index=["Operador", "Comercial", "Admin"].index(dados_u['nivel']))
-            if st.form_submit_button("Atualizar Usuário"):
-                conn.execute("UPDATE usuarios SET login=?, senha=?, nivel=? WHERE id=?", (new_login, new_senha, new_nivel, dados_u['id']))
-                conn.commit()
-                st.success("Dados atualizados!")
-                st.rerun()
+        if not df_u.empty:
+            u_edit = st.selectbox("Selecione o usuário para editar:", df_u['login'].tolist())
+            dados_u = df_u[df_u['login'] == u_edit].iloc[0]
+            with st.form("edit_user"):
+                new_login = st.text_input("Editar Login:", value=dados_u['login'])
+                new_senha = st.text_input("Nova Senha:", value=dados_u['senha'])
+                new_nivel = st.selectbox("Editar Nível:", ["Operador", "Comercial", "Admin"], index=["Operador", "Comercial", "Admin"].index(dados_u['nivel']))
+                if st.form_submit_button("Atualizar Usuário"):
+                    conn.execute("UPDATE usuarios SET login=?, senha=?, nivel=? WHERE id=?", (new_login, new_senha, new_nivel, dados_u['id']))
+                    conn.commit()
+                    st.success("Dados atualizados com sucesso!")
+                    st.rerun()
 
     with t3:
-        u_del = st.selectbox("Remover Usuário (ID):", df_u['id'].tolist(), format_func=lambda x: f"ID {x} - {df_u[df_u['id']==x]['login'].values[0]}")
+        df_u = pd.read_sql_query("SELECT * FROM usuarios", conn)
+        u_del = st.selectbox("ID do Usuário para remover:", df_u['id'].tolist(), format_func=lambda x: f"ID {x} - {df_u[df_u['id']==x]['login'].values[0]}")
         if st.button("Confirmar Exclusão Definitiva"):
             if u_del != 1: 
                 conn.execute("DELETE FROM usuarios WHERE id=?", (u_del,))
@@ -287,6 +297,6 @@ elif menu == "Gerir Usuários":
             else: st.warning("O admin principal não pode ser removido.")
     
     st.markdown("---")
-    st.subheader("👥 Lista de Acessos")
+    st.subheader("👥 Usuários com Acesso")
     st.dataframe(pd.read_sql_query("SELECT id, login, nivel FROM usuarios", conn), use_container_width=True, hide_index=True)
     conn.close()
