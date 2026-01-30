@@ -116,7 +116,7 @@ if st.sidebar.button("Logout / Sair"):
     st.session_state.logado = False
     st.rerun()
 
-st.sidebar.caption("Desenvolvido por: Paulo Henrique")
+st.sidebar.caption("Desenvolvido por: Paulo Henrique - Setor Fiscal")
 
 # --- 5. TELAS DO SISTEMA ---
 
