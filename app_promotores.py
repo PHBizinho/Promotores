@@ -18,6 +18,13 @@ st.markdown("""
     div[data-testid="stMetric"] {
         background-color: #f8f9fa; border: 1px solid #ddd; border-radius: 10px; padding: 15px;
     }
+    /* Estilo para o container de registro */
+    .reg-container {
+        padding: 20px;
+        border: 1px solid #eee;
+        border-radius: 10px;
+        background-color: #fcfcfc;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -118,9 +125,12 @@ if st.sidebar.button("Sair"):
 # --- 5. TELAS ---
 
 if menu == "Entrada e Saída":
-    st.title("🕒 Portaria - Controle de Fluxo")
+    st.markdown(f"### 🕒 Painel de Monitoramento - {date.today().strftime('%d/%m/%Y')}")
+    
     conn = init_db()
     df_v = pd.read_sql_query("SELECT * FROM visitas", conn)
+    
+    # Lógica de quem está em loja
     em_loja_nomes = []
     horarios_checkin = {}
     if not df_v.empty:
@@ -130,26 +140,64 @@ if menu == "Entrada e Saída":
                 em_loja_nomes.append(nome)
                 horarios_checkin[nome] = ult['data_hora']
 
-    st.subheader("📍 Promotores em Loja")
+    # --- DESIGN DE CARDS PARA STATUS RÁPIDO ---
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("👥 Em Loja Agora", len(em_loja_nomes))
+    with c2:
+        visitas_hoje = len(df_v[df_v['data_hora'].str.contains(date.today().strftime("%d/%m/%Y")) & (df_v['evento'] == 'ENTRADA')])
+        st.metric("📅 Total Visitas Hoje", visitas_hoje)
+    with c3:
+        ultima_mov = df_v.iloc[-1]['data_hora'].split(' ')[1] if not df_v.empty else "--:--"
+        st.metric("⏱️ Última Atividade", ultima_mov)
+
+    st.markdown("---")
+
+    # --- ÁREA DE REGISTRO ---
+    with st.container():
+        st.markdown("#### 📝 Registrar Novo Movimento")
+        df_lista = pd.read_sql_query("SELECT nome, fornecedor_fantasia, departamento FROM promotores", conn)
+        df_lista["display"] = df_lista["nome"] + " (" + df_lista["fornecedor_fantasia"] + ")"
+        
+        sel = st.selectbox("Busque pelo nome do promotor ou fornecedor:", [""] + df_lista["display"].tolist(), help="Comece a digitar o nome...")
+        
+        if sel:
+            n_sel = sel.split(" (")[0]
+            check = n_sel in em_loja_nomes
+            
+            col_b1, col_b2, col_b3 = st.columns([1,2,1])
+            with col_b2:
+                agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+                if not check:
+                    if st.button("🚀 CONFIRMAR ENTRADA", type="primary"):
+                        conn.execute("INSERT INTO visitas (nome, evento, data_hora) VALUES (?, 'ENTRADA', ?)", (n_sel, agora))
+                        conn.commit(); st.success(f"Entrada registrada: {n_sel}"); st.rerun()
+                else:
+                    if st.button("🚩 CONFIRMAR SAÍDA", type="secondary"):
+                        conn.execute("INSERT INTO visitas (nome, evento, data_hora) VALUES (?, 'SAÍDA', ?)", (n_sel, agora))
+                        conn.commit(); st.warning(f"Saída registrada: {n_sel}"); st.rerun()
+
+    st.markdown("---")
+
+    # --- TABELA COM VISUAL MODERNO ---
+    st.markdown("#### 📍 Detalhes de Quem está no Prédio")
     if em_loja_nomes:
-        df_p = pd.read_sql_query(f"SELECT nome, fornecedor_fantasia, comprador FROM promotores WHERE nome IN ({','.join(['?']*len(em_loja_nomes))})", conn, params=em_loja_nomes)
-        df_p['Horário Check-in'] = df_p['nome'].map(horarios_checkin)
-        st.dataframe(df_p, use_container_width=True, hide_index=True)
-    
-    df_lista = pd.read_sql_query("SELECT nome, fornecedor_fantasia FROM promotores", conn)
-    df_lista["display"] = df_lista["nome"] + " - (" + df_lista["fornecedor_fantasia"] + ")"
-    sel = st.selectbox("Registrar Movimentação:", [""] + df_lista["display"].tolist())
-    if sel:
-        n_sel = sel.split(" - (")[0]
-        agora = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        if n_sel not in em_loja_nomes:
-            if st.button("CONFIRMAR ENTRADA 🟢"):
-                conn.execute("INSERT INTO visitas (nome, evento, data_hora) VALUES (?, 'ENTRADA', ?)", (n_sel, agora))
-                conn.commit(); st.success(f"Entrada registrada para {n_sel}"); st.rerun()
-        else:
-            if st.button("CONFIRMAR SAÍDA 🔴"):
-                conn.execute("INSERT INTO visitas (nome, evento, data_hora) VALUES (?, 'SAÍDA', ?)", (n_sel, agora))
-                conn.commit(); st.warning(f"Saída registrada para {n_sel}"); st.rerun()
+        df_p = pd.read_sql_query(f"SELECT nome, fornecedor_fantasia, departamento, comprador FROM promotores WHERE nome IN ({','.join(['?']*len(em_loja_nomes))})", conn, params=em_loja_nomes)
+        df_p['Horário Entrada'] = df_p['nome'].map(horarios_checkin)
+        
+        st.dataframe(
+            df_p.sort_values('Horário Entrada', ascending=False), 
+            use_container_width=True, 
+            hide_index=True,
+            column_config={
+                "nome": "Promotor",
+                "fornecedor_fantasia": "Empresa",
+                "departamento": "Setor",
+                "Horário Entrada": st.column_config.TextColumn("Entrada", width="medium")
+            }
+        )
+    else:
+        st.info("Nenhum promotor em loja neste momento.")
     conn.close()
 
 elif menu == "Cadastro/Edição":
@@ -232,7 +280,7 @@ elif menu == "Visão Comercial":
         if comp_sel != "TODOS":
             df_f = df_f[df_f['comprador'] == comp_sel]
 
-        # --- Cálculo de Permanência para KPIs ---
+        # --- Cálculo de Permanência ---
         entradas = df_f[df_f['evento'] == 'ENTRADA'].copy()
         saidas = df_f[df_f['evento'] == 'SAÍDA'].copy()
         tempos = []
@@ -249,29 +297,15 @@ elif menu == "Visão Comercial":
         k1, k2, k3 = st.columns(3)
         k1.metric("Visitas no Período", len(entradas))
         k2.metric("Tempo Médio de Loja", f"{round(df_limpo['Minutos'].mean(), 1)} min" if not df_limpo.empty else "0 min")
-        k3.metric("Forn. mais Ativo (Visitas)", entradas['fornecedor_fantasia'].mode()[0] if not entradas.empty else "-")
+        k3.metric("Forn. mais Ativo", entradas['fornecedor_fantasia'].mode()[0] if not entradas.empty else "-")
 
         st.markdown("---")
-
-        # --- 1. SEÇÃO DE VISITAS (VOLUME) ---
         st.subheader("🏆 Ranking por Volume de Visitas")
         if not entradas.empty:
             ranking_visitas = entradas['fornecedor_fantasia'].value_counts().reset_index()
             ranking_visitas.columns = ['Fornecedor', 'Total de Visitas']
             st.bar_chart(ranking_visitas.set_index('Fornecedor'))
             st.dataframe(ranking_visitas, use_container_width=True, hide_index=True)
-        
-        st.markdown("---")
-        
-        # --- 2. SEÇÃO DE PERMANÊNCIA (MÉDIA) ---
-        st.subheader("⏱️ Média de Permanência por Fornecedor (Minutos)")
-        if not df_limpo.empty:
-            media_forn = df_limpo.groupby('fornecedor_fantasia')['Minutos'].mean().sort_values(ascending=False).reset_index()
-            media_forn.columns = ['Fornecedor', 'Média (Min)']
-            st.bar_chart(media_forn.set_index('Fornecedor'))
-            st.dataframe(media_forn, use_container_width=True, hide_index=True)
-        else:
-            st.info("Sem dados suficientes para gerar médias de permanência.")
 
 elif menu == "Gestão de Usuários":
     st.title("🔐 Administração de Usuários")
@@ -287,20 +321,16 @@ elif menu == "Gestão de Usuários":
         df_u = pd.read_sql_query("SELECT id, login, nivel FROM usuarios", conn)
         st.dataframe(df_u, use_container_width=True, hide_index=True)
     with tab_edit:
-        user_edit = st.selectbox("Selecione o usuário para editar:", df_u['login'].tolist())
-        u_dados = conn.execute("SELECT * FROM usuarios WHERE login=?", (user_edit,)).fetchone()
-        
-        # CORREÇÃO DO ERRO list.index(x)
-        nivel_db = u_dados[3]
-        if nivel_db in NIVEIS_ACESSO:
-            idx_nivel = NIVEIS_ACESSO.index(nivel_db)
-        else:
-            idx_nivel = 0 # Valor padrão caso não encontre
-            
-        with st.form("edit_u"):
-            nl, ns = st.text_input("Login", u_dados[1]), st.text_input("Senha", u_dados[2])
-            nv = st.selectbox("Nível", NIVEIS_ACESSO, index=idx_nivel)
-            if st.form_submit_button("Atualizar Usuário"):
-                conn.execute("UPDATE usuarios SET login=?, senha=?, nivel=? WHERE id=?", (nl, ns, nv, u_dados[0]))
-                conn.commit(); st.success("Usuário atualizado com sucesso!"); st.rerun()
+        user_list = df_u['login'].tolist()
+        if user_list:
+            user_edit = st.selectbox("Selecione o usuário para editar:", user_list)
+            u_dados = conn.execute("SELECT * FROM usuarios WHERE login=?", (user_edit,)).fetchone()
+            nivel_db = u_dados[3]
+            idx_nivel = NIVEIS_ACESSO.index(nivel_db) if nivel_db in NIVEIS_ACESSO else 0
+            with st.form("edit_u"):
+                nl, ns = st.text_input("Login", u_dados[1]), st.text_input("Senha", u_dados[2])
+                nv = st.selectbox("Nível", NIVEIS_ACESSO, index=idx_nivel)
+                if st.form_submit_button("Atualizar Usuário"):
+                    conn.execute("UPDATE usuarios SET login=?, senha=?, nivel=? WHERE id=?", (nl, ns, nv, u_dados[0]))
+                    conn.commit(); st.success("Usuário atualizado!"); st.rerun()
     conn.close()
